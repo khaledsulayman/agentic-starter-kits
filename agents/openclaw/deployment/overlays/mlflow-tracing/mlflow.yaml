@@ -1,0 +1,101 @@
+# Self-hosted MLflow for OpenClaw tracing
+# No auth, SQLite backend, plain HTTP on port 5000
+# Deploy: oc apply -n YOUR-NAMESPACE -f mlflow.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow-local
+  labels:
+    app: mlflow-local
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mlflow-local
+  template:
+    metadata:
+      labels:
+        app: mlflow-local
+    spec:
+      containers:
+        - name: mlflow
+          image: ghcr.io/mlflow/mlflow:v3.10.1
+          command: ["mlflow", "server"]
+          args:
+            - "--host=0.0.0.0"
+            - "--port=5000"
+            - "--allowed-hosts=*"
+            - "--serve-artifacts"
+            - "--artifacts-destination=file:///mlflow/artifacts"
+            - "--backend-store-uri=sqlite:////mlflow/mlflow.db"
+          env:
+            - name: MLFLOW_ALLOWED_ORIGINS
+              value: "*"
+          ports:
+            - containerPort: 5000
+              name: http
+          volumeMounts:
+            - name: data
+              mountPath: /mlflow
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /version
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mlflow-local-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlflow-local-pvc
+  labels:
+    app: mlflow-local
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3-csi
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow-local
+  labels:
+    app: mlflow-local
+spec:
+  selector:
+    app: mlflow-local
+  ports:
+    - port: 5000
+      targetPort: 5000
+      name: http
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: mlflow-local
+  labels:
+    app: mlflow-local
+spec:
+  to:
+    kind: Service
+    name: mlflow-local
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
